@@ -3,16 +3,8 @@ defmodule Acme do
   Documentation for `Acme`.
   """
 
-  @doc """
-  Hello world.
+  alias Acme.Client
 
-  ## Examples
-
-      iex> Acme.hello()
-      :world
-
-  """
-  def hello do
-    :world
-  end
+  defdelegate create_account(account), to: Client
+  defdelegate new_cert(domain), to: Client
 end
