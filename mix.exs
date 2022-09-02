@@ -25,6 +25,7 @@ defmodule Acme.MixProject do
       {:hackney, "~> 1.13"},
       {:jason, ">= 1.0.0"},
       {:jose, "~> 1.8"},
+      {:plug, "~> 1.13"},
       {:mox, "~> 1.0", only: :test}
     ]
   end

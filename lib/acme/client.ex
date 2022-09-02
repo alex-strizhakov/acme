@@ -106,9 +106,17 @@ defmodule Acme.Client do
   end
 
   def handle_call({:validate_token, token}, _, state) do
-    result = token in state.tokens
-    tokens = List.delete(state.tokens, token)
-    {:reply, result, Map.put(state, :tokens, tokens)}
+    {result, state} =
+      if token in state.tokens do
+        tokens = List.delete(state.tokens, token)
+
+        state = Map.put(state, :tokens, tokens)
+        {{:ok, Enum.join([token, state.thumbprint], ".")}, state}
+      else
+        {{:error, :not_found}, state}
+      end
+
+    {:reply, result, state}
   end
 
   defp sign_jws(payload, private_key, extra_protected_header) do

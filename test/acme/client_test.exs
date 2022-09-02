@@ -1,5 +1,6 @@
 defmodule Acme.ClientTest do
   use ExUnit.Case, async: true
+  use Plug.Test
 
   import Mox
 
@@ -134,6 +135,15 @@ defmodule Acme.ClientTest do
     state = :sys.get_state(pid)
     assert state.nonce == token_cert_nonce
     assert state.tokens == [token]
+
+    conn =
+      :get
+      |> conn("/.well-known/acme-challenge/" <> token)
+      |> Acme.ChallengePlug.call(pid)
+
+    assert conn.state == :sent
+    assert conn.status == 200
+    assert conn.resp_body == Enum.join([token, state.thumbprint], ".")
   end
 
   defp endpoints(base_url) do
