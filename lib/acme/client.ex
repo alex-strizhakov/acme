@@ -202,7 +202,7 @@ defmodule Acme.Client do
   end
 
   defp request_http_challenge(challenge_url, state) do
-    payload = ""
+    payload = %{}
 
     data =
       sign_jws(payload, state.private_key, %{
