@@ -98,7 +98,8 @@ defmodule Acme.Client do
   def handle_call({:new_cert, domain}, _, state) do
     {result, state} =
       with {:ok, auth_url, state} <- get_authorization_url(domain, state),
-           {:ok, state} <- get_authorization_domain_token(auth_url, state) do
+           {:ok, challenge_url, state} <- get_authorization_info(auth_url, state),
+           {:ok, state} <- request_http_challenge(challenge_url, state) do
         {:ok, state}
       end
 
@@ -157,8 +158,9 @@ defmodule Acme.Client do
         "kid" => state.kid
       })
 
-    with {:ok, %{headers: headers, body: %{"authorizations" => [auth_url]}}} <-
+    with {:ok, %{headers: headers, body: %{"authorizations" => [auth_url]} = body}} <-
            Tesla.post(state.client, state.endpoints["newOrder"], data),
+         IO.inspect(body),
          {:ok, nonce} <- get_header(headers, "replay-nonce") do
       state = Map.put(state, :nonce, nonce)
       {:ok, auth_url, state}
@@ -175,7 +177,7 @@ defmodule Acme.Client do
     end)
   end
 
-  defp get_authorization_domain_token(auth_url, state) do
+  defp get_authorization_info(auth_url, state) do
     payload = ""
 
     data =
@@ -185,11 +187,36 @@ defmodule Acme.Client do
         "kid" => state.kid
       })
 
-    with {:ok, %{headers: headers, body: %{"challenges" => challenges}}} <-
+    with {:ok, %{headers: headers, body: %{"challenges" => challenges} = body}} <-
            Tesla.post(state.client, auth_url, data),
-         %{"token" => token} <- find_http_challenge(challenges),
+         IO.inspect(body, label: :challenges),
+         %{"token" => token, "url" => url} <- find_http_challenge(challenges),
          {:ok, nonce} <- get_header(headers, "replay-nonce") do
-      {:ok, %{state | nonce: nonce, tokens: [token | state.tokens]}}
+      {:ok, url, %{state | nonce: nonce, tokens: [token | state.tokens]}}
+    else
+      error ->
+        Logger.error("fetching authorization token fail #{inspect(error)}")
+
+        {:error, state}
+    end
+  end
+
+  defp request_http_challenge(challenge_url, state) do
+    payload = ""
+
+    data =
+      sign_jws(payload, state.private_key, %{
+        "url" => challenge_url,
+        "nonce" => state.nonce,
+        "kid" => state.kid
+      })
+
+    with {:ok, %{headers: headers, body: body}} <-
+           Tesla.post(state.client, challenge_url, data),
+         IO.inspect(body, label: :after_challenge_request),
+         # %{"token" => token, "url" => url} <- find_http_challenge(challenges),
+         {:ok, nonce} <- get_header(headers, "replay-nonce") do
+      {:ok, %{state | nonce: nonce}}
     else
       error ->
         Logger.error("fetching authorization token fail #{inspect(error)}")
