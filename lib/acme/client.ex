@@ -6,7 +6,7 @@ defmodule Acme.Client do
               private_key: nil,
               kid: nil,
               thumbprint: nil,
-              tokens: []
+              tokens: %{}
   end
 
   use GenServer
@@ -97,27 +97,42 @@ defmodule Acme.Client do
 
   def handle_call({:new_cert, domain}, _, state) do
     {result, state} =
-      with {:ok, auth_url, state} <- get_authorization_url(domain, state),
-           {:ok, challenge_url, state} <- get_authorization_info(auth_url, state),
+      with {:ok, auth_url, finalize_url, state} <- get_authorization_url(domain, state),
+           {:ok, challenge_url, state} <- get_authorization_info(auth_url, finalize_url, state),
            {:ok, state} <- request_http_challenge(challenge_url, state) do
-        {:ok, state}
+        {:ok, timer_ref} = :timer.send_interval(5_000, :poll_status)
+        {:ok, Map.put(state, :timer_ref, timer_ref)}
       end
 
     {:reply, result, state}
   end
 
   def handle_call({:validate_token, token}, _, state) do
-    {result, state} =
-      if token in state.tokens do
-        tokens = List.delete(state.tokens, token)
+    IO.inspect(token, label: :token)
+    IO.inspect(state, label: :state)
 
-        state = Map.put(state, :tokens, tokens)
+    {result, state} =
+      if Map.has_key?(state.tokens, token) do
+        # tokens = List.delete(state.tokens, token)
+
+        # state = Map.put(state, :tokens, tokens)
         {{:ok, Enum.join([token, state.thumbprint], ".")}, state}
       else
         {{:error, :not_found}, state}
       end
 
     {:reply, result, state}
+  end
+
+  @impl true
+  def handle_info(:poll_status, state) do
+    state =
+      Enum.reduce(state.tokens, state, fn {_t, urls}, state ->
+        {:ok, state} = poll_authorization_info(urls[:auth_url], state)
+        state
+      end)
+
+    {:noreply, state}
   end
 
   defp sign_jws(payload, private_key, extra_protected_header) do
@@ -158,12 +173,16 @@ defmodule Acme.Client do
         "kid" => state.kid
       })
 
-    with {:ok, %{headers: headers, body: %{"authorizations" => [auth_url]} = body}} <-
+    with {:ok,
+          %{
+            headers: headers,
+            body: %{"authorizations" => [auth_url], "finalize" => finalize_url} = body
+          }} <-
            Tesla.post(state.client, state.endpoints["newOrder"], data),
-         IO.inspect(body),
+         IO.inspect(body, label: "body"),
          {:ok, nonce} <- get_header(headers, "replay-nonce") do
       state = Map.put(state, :nonce, nonce)
-      {:ok, auth_url, state}
+      {:ok, auth_url, finalize_url, state}
     else
       error ->
         Logger.error("fetching authorization url fail #{inspect(error)}")
@@ -177,7 +196,7 @@ defmodule Acme.Client do
     end)
   end
 
-  defp get_authorization_info(auth_url, state) do
+  defp get_authorization_info(auth_url, finalize_url, state) do
     payload = ""
 
     data =
@@ -192,7 +211,35 @@ defmodule Acme.Client do
          IO.inspect(body, label: :challenges),
          %{"token" => token, "url" => url} <- find_http_challenge(challenges),
          {:ok, nonce} <- get_header(headers, "replay-nonce") do
-      {:ok, url, %{state | nonce: nonce, tokens: [token | state.tokens]}}
+      {:ok, url,
+       %{
+         state
+         | nonce: nonce,
+           tokens: Map.put(state.tokens, token, %{auth_url: auth_url, finalize_url: finalize_url})
+       }}
+    else
+      error ->
+        Logger.error("fetching authorization token fail #{inspect(error)}")
+
+        {:error, state}
+    end
+  end
+
+  defp poll_authorization_info(auth_url, state) do
+    payload = ""
+
+    data =
+      sign_jws(payload, state.private_key, %{
+        "url" => auth_url,
+        "nonce" => state.nonce,
+        "kid" => state.kid
+      })
+
+    with {:ok, %{headers: headers, body: body}} <- Tesla.post(state.client, auth_url, data),
+         IO.inspect(body, label: :auth_info),
+         # %{"token" => token, "url" => url} <- find_http_challenge(challenges),
+         {:ok, nonce} <- get_header(headers, "replay-nonce") do
+      {:ok, %{state | nonce: nonce}}
     else
       error ->
         Logger.error("fetching authorization token fail #{inspect(error)}")
