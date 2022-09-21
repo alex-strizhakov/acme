@@ -116,7 +116,7 @@ defmodule Acme.Client do
       with {:ok, request, state} <- get_authorization_url(request, state),
            {:ok, request, state} <- get_authorization_info(request, state),
            {:ok, state} <- request_http_challenge(request, state) do
-        {:ok, %{state | requests: Map.put(state.request, domain, request)}}
+        {:ok, %{state | requests: Map.put(state.requests, domain, request)}}
       end
 
     {:reply, result, state}
