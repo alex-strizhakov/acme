@@ -101,7 +101,8 @@ defmodule Acme.Client do
         state = %{state | nonce: nonce, kid: kid}
         {:ok, state}
       else
-        _ ->
+        error ->
+          Logger.error(inspect(error))
           {:error, state}
       end
 
