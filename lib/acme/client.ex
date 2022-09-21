@@ -102,7 +102,7 @@ defmodule Acme.Client do
         {:ok, state}
       else
         error ->
-          Logger.error(inspect(error))
+          Logger.error("#{inspect(error)}")
           {:error, state}
       end
 
