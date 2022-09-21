@@ -26,7 +26,8 @@ defmodule Acme.MixProject do
       {:jason, ">= 1.0.0"},
       {:jose, "~> 1.8"},
       {:plug, "~> 1.13"},
-      {:mox, "~> 1.0", only: :test}
+      {:mox, "~> 1.0", only: :test},
+      {:x509, "~> 0.3"}
     ]
   end
 end

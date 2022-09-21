@@ -1,4 +1,17 @@
 defmodule Acme.Client do
+  defmodule Request do
+    defstruct [
+      :domain,
+      :authorize_url,
+      :finalize_url,
+      :challenge_url,
+      :status,
+      :token,
+      :timer_ref,
+      :private_key
+    ]
+  end
+
   defmodule State do
     defstruct endpoints: %{},
               client: nil,
@@ -6,7 +19,7 @@ defmodule Acme.Client do
               private_key: nil,
               kid: nil,
               thumbprint: nil,
-              tokens: %{}
+              requests: %{}
   end
 
   use GenServer
@@ -96,12 +109,13 @@ defmodule Acme.Client do
   end
 
   def handle_call({:new_cert, domain}, _, state) do
+    request = %Request{domain: domain, status: :pending}
+
     {result, state} =
-      with {:ok, auth_url, finalize_url, state} <- get_authorization_url(domain, state),
-           {:ok, challenge_url, state} <- get_authorization_info(auth_url, finalize_url, state),
-           {:ok, state} <- request_http_challenge(challenge_url, state) do
-        {:ok, timer_ref} = :timer.send_interval(5_000, :poll_status)
-        {:ok, Map.put(state, :timer_ref, timer_ref)}
+      with {:ok, request, state} <- get_authorization_url(request, state),
+           {:ok, request, state} <- get_authorization_info(request, state),
+           {:ok, state} <- request_http_challenge(request, state) do
+        {:ok, %{state | requests: Map.put(state.request, domain, request)}}
       end
 
     {:reply, result, state}
@@ -111,28 +125,104 @@ defmodule Acme.Client do
     IO.inspect(token, label: :token)
     IO.inspect(state, label: :state)
 
-    {result, state} =
-      if Map.has_key?(state.tokens, token) do
-        # tokens = List.delete(state.tokens, token)
+    {domain, request} = Enum.find(state.requests, fn {_, data} -> data.token == token end)
 
-        # state = Map.put(state, :tokens, tokens)
+    {result, state} =
+      if request do
+        state =
+          if is_nil(request.timer_ref) and request.status == :pending do
+            {:ok, timer_ref} = :timer.send_interval(5_000, {:poll_status, domain})
+            request = Map.put(request, :timer_ref, timer_ref)
+            %{state | requests: Map.put(state.requests, domain, request)}
+          else
+            state
+          end
+
         {{:ok, Enum.join([token, state.thumbprint], ".")}, state}
       else
         {{:error, :not_found}, state}
       end
 
+    # {result, state} =
+    # if Map.has_key?(state.tokens, token) do
+    # tokens = List.delete(state.tokens, token)
+
+    # state = Map.put(state, :tokens, tokens)
+    # {{:ok, Enum.join([token, state.thumbprint], ".")}, state}
+    # else
+    # {{:error, :not_found}, state}
+    # end
+
     {:reply, result, state}
   end
 
   @impl true
-  def handle_info(:poll_status, state) do
+  def handle_info({:poll_status, requested_domain}, state) do
+    {requested_domain, request} =
+      Enum.find(state.requests, fn {domain, _data} -> domain == requested_domain end)
+
+    # Enum.reduce(state.tokens, state, fn {_t, urls}, state ->
+    {:ok, request, state} = poll_authorization_info(request, state)
+    # state
+    # end)
     state =
-      Enum.reduce(state.tokens, state, fn {_t, urls}, state ->
-        {:ok, state} = poll_authorization_info(urls[:auth_url], state)
+      if request.status == :valid do
+        :ok = :timer.cancel(request.timer_ref)
+        send(self(), {:finalize, requested_domain, request})
+        %{state | requests: Map.put(state.requests, requested_domain, request)}
+      else
         state
-      end)
+      end
 
     {:noreply, state}
+  end
+
+  def handle_info({:finalize, requested_domain, request}, state) do
+    private_key = X509.PrivateKey.new_rsa(4096)
+
+    request = Map.put(request, :private_key, private_key)
+
+    csr =
+      private_key
+      |> X509.CSR.new(
+        {:rdnSequence, []},
+        extension_request: [X509.Certificate.Extension.subject_alt_name(requested_domain)]
+      )
+      |> X509.CSR.to_der()
+
+    payload = %{"csr" => Base.url_encode64(csr, padding: false)}
+
+    data =
+      sign_jws(payload, state.private_key, %{
+        "url" => request.finalize_url,
+        "nonce" => state.nonce,
+        "kid" => state.kid
+      })
+
+    with {:ok, %{headers: headers, body: body}} <-
+           Tesla.post(state.client, request.finalize_url, data),
+         IO.inspect(body, label: :finalize_info),
+         # %{"token" => token, "url" => url} <- find_http_challenge(challenges),
+         {:ok, nonce} <- get_header(headers, "replay-nonce") do
+      request =
+        if body["status"] == "valid" do
+          # send(self(), {:finalize, finalize_url})
+          # Map.put(request, :status, :valid)
+          Logger.warn("we can download certificate")
+          request
+        else
+          request
+        end
+
+      {:ok, request, %{state | nonce: nonce}}
+    else
+      error ->
+        Logger.error("fetching authorization token fail #{inspect(error)}")
+
+        {:error, state}
+    end
+
+    # csr = Crypto.csr(private_key, config.domains)
   end
 
   defp sign_jws(payload, private_key, extra_protected_header) do
@@ -163,8 +253,8 @@ defmodule Acme.Client do
   defp jwk_to_alg(%{"kty" => "EC", "crv" => "P-384"}), do: "ES384"
   defp jwk_to_alg(%{"kty" => "EC", "crv" => "P-521"}), do: "ES512"
 
-  defp get_authorization_url(domain, state) do
-    payload = %{identifiers: [%{type: "dns", value: domain}]}
+  defp get_authorization_url(request, state) do
+    payload = %{identifiers: [%{type: "dns", value: request.domain}]}
 
     data =
       sign_jws(payload, state.private_key, %{
@@ -181,8 +271,9 @@ defmodule Acme.Client do
            Tesla.post(state.client, state.endpoints["newOrder"], data),
          IO.inspect(body, label: "body"),
          {:ok, nonce} <- get_header(headers, "replay-nonce") do
-      state = Map.put(state, :nonce, nonce)
-      {:ok, auth_url, finalize_url, state}
+      request = %{request | authorize_url: auth_url, finalize_url: finalize_url}
+      state = %{state | nonce: nonce}
+      {:ok, request, state}
     else
       error ->
         Logger.error("fetching authorization url fail #{inspect(error)}")
@@ -196,27 +287,28 @@ defmodule Acme.Client do
     end)
   end
 
-  defp get_authorization_info(auth_url, finalize_url, state) do
+  defp get_authorization_info(request, state) do
     payload = ""
 
     data =
       sign_jws(payload, state.private_key, %{
-        "url" => auth_url,
+        "url" => request.authorize_url,
         "nonce" => state.nonce,
         "kid" => state.kid
       })
 
     with {:ok, %{headers: headers, body: %{"challenges" => challenges} = body}} <-
-           Tesla.post(state.client, auth_url, data),
+           Tesla.post(state.client, request.authorize_url, data),
          IO.inspect(body, label: :challenges),
          %{"token" => token, "url" => url} <- find_http_challenge(challenges),
          {:ok, nonce} <- get_header(headers, "replay-nonce") do
-      {:ok, url,
-       %{
-         state
-         | nonce: nonce,
-           tokens: Map.put(state.tokens, token, %{auth_url: auth_url, finalize_url: finalize_url})
-       }}
+      request = %{request | challenge_url: url, token: token}
+
+      {
+        :ok,
+        request,
+        %{state | nonce: nonce}
+      }
     else
       error ->
         Logger.error("fetching authorization token fail #{inspect(error)}")
@@ -225,41 +317,50 @@ defmodule Acme.Client do
     end
   end
 
-  defp poll_authorization_info(auth_url, state) do
+  defp poll_authorization_info(request, state) do
     payload = ""
 
     data =
       sign_jws(payload, state.private_key, %{
-        "url" => auth_url,
-        "nonce" => state.nonce,
-        "kid" => state.kid
-      })
-
-    with {:ok, %{headers: headers, body: body}} <- Tesla.post(state.client, auth_url, data),
-         IO.inspect(body, label: :auth_info),
-         # %{"token" => token, "url" => url} <- find_http_challenge(challenges),
-         {:ok, nonce} <- get_header(headers, "replay-nonce") do
-      {:ok, %{state | nonce: nonce}}
-    else
-      error ->
-        Logger.error("fetching authorization token fail #{inspect(error)}")
-
-        {:error, state}
-    end
-  end
-
-  defp request_http_challenge(challenge_url, state) do
-    payload = %{}
-
-    data =
-      sign_jws(payload, state.private_key, %{
-        "url" => challenge_url,
+        "url" => request.authorize_url,
         "nonce" => state.nonce,
         "kid" => state.kid
       })
 
     with {:ok, %{headers: headers, body: body}} <-
-           Tesla.post(state.client, challenge_url, data),
+           Tesla.post(state.client, request.authorize_url, data),
+         IO.inspect(body, label: :auth_info),
+         # %{"token" => token, "url" => url} <- find_http_challenge(challenges),
+         {:ok, nonce} <- get_header(headers, "replay-nonce") do
+      request =
+        if body["status"] == "valid" do
+          # send(self(), {:finalize, finalize_url})
+          Map.put(request, :status, :valid)
+        else
+          request
+        end
+
+      {:ok, request, %{state | nonce: nonce}}
+    else
+      error ->
+        Logger.error("fetching authorization token fail #{inspect(error)}")
+
+        {:error, state}
+    end
+  end
+
+  defp request_http_challenge(request, state) do
+    payload = %{}
+
+    data =
+      sign_jws(payload, state.private_key, %{
+        "url" => request.challenge_url,
+        "nonce" => state.nonce,
+        "kid" => state.kid
+      })
+
+    with {:ok, %{headers: headers, body: body}} <-
+           Tesla.post(state.client, request.challenge_url, data),
          IO.inspect(body, label: :after_challenge_request),
          # %{"token" => token, "url" => url} <- find_http_challenge(challenges),
          {:ok, nonce} <- get_header(headers, "replay-nonce") do
