@@ -194,7 +194,7 @@ defmodule Acme.Client do
       private_key
       |> X509.CSR.new(
         {:rdnSequence, []},
-        extension_request: [X509.Certificate.Extension.subject_alt_name(requested_domain)]
+        extension_request: [X509.Certificate.Extension.subject_alt_name([requested_domain])]
       )
       |> X509.CSR.to_der()
 
