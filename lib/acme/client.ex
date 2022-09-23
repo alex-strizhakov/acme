@@ -168,7 +168,7 @@ defmodule Acme.Client do
     # end)
     state =
       if request.status == :valid do
-        :ok = :timer.cancel(request.timer_ref)
+        :timer.cancel(request.timer_ref)
         send(self(), {:finalize, requested_domain, request})
         %{state | requests: Map.put(state.requests, requested_domain, request)}
       else
