@@ -113,10 +113,17 @@ defmodule Acme.Client do
     request = %Request{domain: domain, status: :pending}
 
     {result, state} =
-      with {:ok, request, state} <- get_authorization_url(request, state),
+      with {:ok, %{status: :pending} = request, state} <- get_authorization_url(request, state),
            {:ok, request, state} <- get_authorization_info(request, state),
            {:ok, state} <- request_http_challenge(request, state) do
         {:ok, %{state | requests: Map.put(state.requests, domain, request)}}
+      else
+        {:ok, %{status: :ready} = request, state} ->
+          send(self(), {:finalize, domain, request})
+          {:ok, %{state | requests: Map.put(state.requests, domain, request)}}
+
+        error ->
+          error
       end
 
     {:reply, result, state}
@@ -273,6 +280,14 @@ defmodule Acme.Client do
          IO.inspect(body, label: "body"),
          {:ok, nonce} <- get_header(headers, "replay-nonce") do
       request = %{request | authorize_url: auth_url, finalize_url: finalize_url}
+
+      request =
+        if body["status"] == "ready" do
+          Map.put(request, :status, :ready)
+        else
+          request
+        end
+
       state = %{state | nonce: nonce}
       {:ok, request, state}
     else
