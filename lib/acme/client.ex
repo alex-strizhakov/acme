@@ -235,7 +235,7 @@ defmodule Acme.Client do
             [cert | chain] = String.split(body, ~r/^\-+END CERTIFICATE\-+$\K/m, parts: 2)
 
             pems = %{
-              privkey: state.private_key |> X509.PrivateKey.to_pem() |> normalize_pem(),
+              privkey: state.private_key |> JWK.to_pem() |> normalize_pem(),
               cert: normalize_pem(cert),
               chain: normalize_pem(to_string(chain))
             }
