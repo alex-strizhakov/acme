@@ -207,7 +207,7 @@ defmodule Acme.Client do
         "kid" => state.kid
       })
 
-    {result, state} =
+    {result, request, state} =
       with {:ok, %{headers: headers, body: body}} <-
              Tesla.post(state.client, request.finalize_url, data),
            IO.inspect(body, label: :finalize_info),
@@ -231,7 +231,26 @@ defmodule Acme.Client do
                 "kid" => state.kid
               })
 
-            result = Tesla.post(state.client, certificate_url, data)
+            {:ok, %{body: body}} = result = Tesla.post(state.client, certificate_url, data)
+            [cert | chain] = String.split(body, ~r/^\-+END CERTIFICATE\-+$\K/m, parts: 2)
+
+            pems = %{
+              privkey: state.private_key |> X509.PrivateKey.to_pem() |> normalize_pem(),
+              cert: normalize_pem(cert),
+              chain: normalize_pem(to_string(chain))
+            }
+
+            Enum.each(
+              pems,
+              fn {type, content} ->
+                path = Path.join(["domains", "#{type}.pem"])
+                File.mkdir_p(Path.dirname(path))
+                File.write!(path, content)
+                File.chmod!(path, 0o600)
+                # store_file!(Path.join(domain_folder(config), "#{type}.pem"), content)
+              end
+            )
+
             IO.inspect(result, label: :result_get_cert)
             request
           else
@@ -243,12 +262,20 @@ defmodule Acme.Client do
         error ->
           Logger.error("fetching authorization token fail #{inspect(error)}")
 
-          {:error, state}
+          {:error, request, state}
       end
 
+    IO.inspect(request, label: :request_after_cert)
     IO.inspect(result, label: :result_after_finalize_url)
     {:noreply, state}
     # csr = Crypto.csr(private_key, config.domains)
+  end
+
+  defp normalize_pem(pem) do
+    case String.trim(pem) do
+      "" -> ""
+      pem -> pem <> "\n"
+    end
   end
 
   defp sign_jws(payload, private_key, extra_protected_header) do
