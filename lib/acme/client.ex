@@ -207,29 +207,47 @@ defmodule Acme.Client do
         "kid" => state.kid
       })
 
-    with {:ok, %{headers: headers, body: body}} <-
-           Tesla.post(state.client, request.finalize_url, data),
-         IO.inspect(body, label: :finalize_info),
-         # %{"token" => token, "url" => url} <- find_http_challenge(challenges),
-         {:ok, nonce} <- get_header(headers, "replay-nonce") do
-      request =
-        if body["status"] == "valid" do
-          # send(self(), {:finalize, finalize_url})
-          # Map.put(request, :status, :valid)
-          Logger.warn("we can download certificate")
-          request
-        else
-          request
-        end
+    {result, state} =
+      with {:ok, %{headers: headers, body: body}} <-
+             Tesla.post(state.client, request.finalize_url, data),
+           IO.inspect(body, label: :finalize_info),
+           # %{"token" => token, "url" => url} <- find_http_challenge(challenges),
+           {:ok, nonce} <- get_header(headers, "replay-nonce") do
+        state = %{state | nonce: nonce}
 
-      {:ok, request, %{state | nonce: nonce}}
-    else
-      error ->
-        Logger.error("fetching authorization token fail #{inspect(error)}")
+        request =
+          if body["status"] == "valid" do
+            # send(self(), {:finalize, finalize_url})
+            # Map.put(request, :status, :valid)
+            Logger.warn("we can download certificate")
+            certificate_url = body["certificate"]
 
-        {:error, state}
-    end
+            payload = ""
 
+            data =
+              sign_jws(payload, state.private_key, %{
+                "url" => certificate_url,
+                "nonce" => state.nonce,
+                "kid" => state.kid
+              })
+
+            result = Tesla.post(state.client, certificate_url, data)
+            IO.inspect(result, label: :result_get_cert)
+            request
+          else
+            request
+          end
+
+        {:ok, request, %{state | nonce: nonce}}
+      else
+        error ->
+          Logger.error("fetching authorization token fail #{inspect(error)}")
+
+          {:error, state}
+      end
+
+    IO.inspect(result, label: :result_after_finalize_url)
+    {:noreply, state}
     # csr = Crypto.csr(private_key, config.domains)
   end
 
