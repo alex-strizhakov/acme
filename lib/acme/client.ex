@@ -249,6 +249,7 @@ defmodule Acme.Client do
                 File.mkdir_p(Path.dirname(path))
                 File.write!(path, content)
                 File.chmod!(path, 0o600)
+                IO.inspect(Path.absname(path), label: :abs_path_name)
                 # store_file!(Path.join(domain_folder(config), "#{type}.pem"), content)
               end
             )
