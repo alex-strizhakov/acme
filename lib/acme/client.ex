@@ -234,7 +234,7 @@ defmodule Acme.Client do
             {:ok, %{body: body}} = result = Tesla.post(state.client, certificate_url, data)
             [cert | chain] = String.split(body, ~r/^\-+END CERTIFICATE\-+$\K/m, parts: 2)
 
-            {_, priv_key} = private_key |> X509.PrivateKey.to_pem() |> normalize_pem()
+            priv_key = private_key |> X509.PrivateKey.to_pem() |> normalize_pem()
 
             pems = %{
               privkey: normalize_pem(priv_key),
