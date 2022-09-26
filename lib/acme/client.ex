@@ -188,7 +188,7 @@ defmodule Acme.Client do
   def handle_info({:finalize, requested_domain, request}, state) do
     private_key = X509.PrivateKey.new_rsa(4096)
 
-    request = Map.put(request, :private_key, private_key)
+    # request = Map.put(request, :private_key, private_key)
 
     csr =
       private_key
@@ -234,7 +234,7 @@ defmodule Acme.Client do
             {:ok, %{body: body}} = result = Tesla.post(state.client, certificate_url, data)
             [cert | chain] = String.split(body, ~r/^\-+END CERTIFICATE\-+$\K/m, parts: 2)
 
-            {_, priv_key} = state.private_key |> JWK.to_pem()
+            {_, priv_key} = private_key |> X509.PrivateKey.to_pem() |> normalize_pem()
 
             pems = %{
               privkey: normalize_pem(priv_key),
