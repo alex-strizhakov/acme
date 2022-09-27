@@ -65,23 +65,8 @@ defmodule Acme.Client do
       base_path: opts[:base_path] || ""
     }
 
-    IO.inspect(state, label: :state)
-    {:ok, state, {:continue, :initial_setup}}
-  end
-
-  @impl true
-  def handle_continue(:initial_setup, state) do
-    with {:ok, %{body: endpoints}} <- Tesla.get(state.client, "/directory"),
-         {:ok, %{headers: headers}} <- Tesla.get(state.client, endpoints["newNonce"]) do
-      state =
-        state
-        |> update_nonce(headers)
-        |> Map.put(:endpoints, endpoints)
-
-      {:noreply, state}
-    else
-      _ -> {:stop, :initial_setup_fail, nil}
-    end
+    Process.send_after(self(), :initial_setup, 100)
+    {:ok, state}
   end
 
   @impl true
@@ -162,6 +147,20 @@ defmodule Acme.Client do
   end
 
   @impl true
+  def handle_info(:initial_setup, state) do
+    with {:ok, %{body: endpoints}} <- Tesla.get(state.client, "/directory"),
+         {:ok, %{headers: headers}} <- Tesla.get(state.client, endpoints["newNonce"]) do
+      state =
+        state
+        |> update_nonce(headers)
+        |> Map.put(:endpoints, endpoints)
+
+      {:noreply, state}
+    else
+      _ -> {:stop, :initial_setup_fail, nil}
+    end
+  end
+
   def handle_info({:poll_status, domain}, state) do
     {_domain, request} = find_request_by_domain(state, domain)
     {:ok, request, state} = poll_authorization_info(request, state)

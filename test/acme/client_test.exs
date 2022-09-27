@@ -172,6 +172,7 @@ defmodule Acme.ClientTest do
 
     assert is_pid(pid)
     assert Process.alive?(pid)
+    Process.sleep(100)
     state = :sys.get_state(pid)
 
     assert state == %Acme.Client.State{
