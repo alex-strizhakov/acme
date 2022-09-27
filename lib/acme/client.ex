@@ -65,6 +65,7 @@ defmodule Acme.Client do
       base_path: opts[:base_path] || ""
     }
 
+    IO.inspect(state, label: :state)
     {:ok, state, {:continue, :initial_setup}}
   end
 
