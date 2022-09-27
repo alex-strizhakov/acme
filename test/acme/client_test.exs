@@ -11,6 +11,7 @@ defmodule Acme.ClientTest do
 
   test "register certificate" do
     base_url = "https://example.com"
+    domain = "domain.com"
     endpoints = endpoints(base_url)
 
     %{"newNonce" => new_nonce_url, "newAccount" => new_account_url, "newOrder" => new_order_url} =
@@ -19,12 +20,20 @@ defmodule Acme.ClientTest do
     directory_url = base_url <> "/directory"
     auth_url = base_url <> "/acme/authz-v3/3484011403"
     kid = base_url <> "/acme/acct/66475763"
+    finalize_url = base_url <> "/acme/finalize/69004934/4274516444"
+    http_challenge_url = base_url <> "/acme/chall-v3/3760565994/1yyChw"
+    certificate_url = base_url <> "/acme/cert/fabb079411e5bc4bd10e16e33d23ff5bc1b3"
     token = "some_token"
+    downloaded_cert = File.read!("test/cert.pem")
 
     initial_nonce = generate_nonce()
     create_acc_nonce = generate_nonce()
     token_cert_nonce = generate_nonce()
     new_order_nonce = generate_nonce()
+    http_challenge_nonce = generate_nonce()
+    poll_authorization_nonce = generate_nonce()
+    finalize_nonce = generate_nonce()
+    certificate_nonce = generate_nonce()
 
     Mock
     |> expect(:call, fn %{url: ^directory_url}, _opts ->
@@ -59,7 +68,12 @@ defmodule Acme.ClientTest do
            {"replay-nonce", new_order_nonce},
            {"content-type", "application/json"}
          ],
-         body: Jason.encode!(%{"authorizations" => [auth_url]})
+         body:
+           Jason.encode!(%{
+             "authorizations" => [auth_url],
+             "finalize" => finalize_url,
+             "status" => "pending"
+           })
        }}
     end)
     |> expect(:call, fn %{
@@ -73,7 +87,74 @@ defmodule Acme.ClientTest do
            {"replay-nonce", token_cert_nonce},
            {"content-type", "application/json"}
          ],
-         body: Jason.encode!(%{"challenges" => [%{"type" => "http-01", "token" => token}]})
+         body:
+           Jason.encode!(%{
+             "challenges" => [
+               %{"type" => "http-01", "token" => token, "url" => http_challenge_url}
+             ]
+           })
+       }}
+    end)
+    |> expect(:call, fn %{
+                          url: ^http_challenge_url,
+                          headers: [{"content-type", "application/jose+json"}]
+                        },
+                        _ ->
+      {:ok,
+       %Tesla.Env{
+         headers: [
+           {"replay-nonce", http_challenge_nonce},
+           {"content-type", "application/json"}
+         ],
+         body:
+           Jason.encode!(%{
+             "status" => "pending",
+             "token" => token,
+             "type" => "http-01",
+             "url" => http_challenge_url
+           })
+       }}
+    end)
+    |> expect(:call, fn %{
+                          url: ^auth_url,
+                          headers: [{"content-type", "application/jose+json"}]
+                        },
+                        _ ->
+      {:ok,
+       %Tesla.Env{
+         headers: [
+           {"replay-nonce", poll_authorization_nonce},
+           {"content-type", "application/json"}
+         ],
+         body: Jason.encode!(%{status: "valid"})
+       }}
+    end)
+    |> expect(:call, fn %{
+                          url: ^finalize_url,
+                          headers: [{"content-type", "application/jose+json"}]
+                        },
+                        _ ->
+      {:ok,
+       %Tesla.Env{
+         headers: [
+           {"replay-nonce", finalize_nonce},
+           {"content-type", "application/json"}
+         ],
+         body: Jason.encode!(%{"status" => "valid", "certificate" => certificate_url})
+       }}
+    end)
+    |> expect(:call, fn %{
+                          url: ^certificate_url,
+                          headers: [{"content-type", "application/jose+json"}]
+                        },
+                        _ ->
+      {:ok,
+       %Tesla.Env{
+         headers: [
+           {"replay-nonce", certificate_nonce},
+           {"content-type", "application/json"}
+         ],
+         body: Jason.encode!(downloaded_cert)
        }}
     end)
 
@@ -81,7 +162,9 @@ defmodule Acme.ClientTest do
       name: Acme.ClientTest,
       base_url: base_url,
       adapter: Tesla.Adapter.Mock,
-      key_path: "test/selfsigned_key.pem"
+      key_path: "test/selfsigned_key.pem",
+      polling_interval: 10,
+      base_path: "test"
     ]
 
     {:ok, pid} = start_supervised({Client, opts}, restart: :temporary)
@@ -123,7 +206,9 @@ defmodule Acme.ClientTest do
                  "Gi84WHNOcf3nQUJw6ibRlNz_fn3UMzXNTrtFuZXGaXMS3HGz6_jA17surJjWCB2TW0lNCCtjLgC5u4KSzINT9F_8uogLl1H7ns_S8DBJrUnk2545H_k0dsTiaS0SmmSD0X8AQNPxq44arC09_Xi5aI3LwnV4d4Ji-AZgqJQTGC8"
              },
              thumbprint: "Y0elpL8gynwnjT7xJlDBmdap7obVA_EFNh-TOzBg6l4",
-             tokens: []
+             requests: %{},
+             polling_interval: 10,
+             base_path: "test"
            }
 
     assert :ok = Client.create_account("email@example.com", pid)
@@ -131,10 +216,22 @@ defmodule Acme.ClientTest do
     assert state.nonce == create_acc_nonce
     assert state.kid == kid
 
-    assert :ok = Client.new_cert("domain.com", pid)
+    assert :ok = Client.new_cert(domain, pid)
     state = :sys.get_state(pid)
-    assert state.nonce == token_cert_nonce
-    assert state.tokens == [token]
+    assert state.nonce == http_challenge_nonce
+
+    assert state.requests == %{
+             domain => %Acme.Client.Request{
+               domain: domain,
+               authorize_url: auth_url,
+               finalize_url: finalize_url,
+               challenge_url: http_challenge_url,
+               status: :pending,
+               token: token,
+               timer_ref: nil,
+               private_key: nil
+             }
+           }
 
     conn =
       :get
@@ -144,6 +241,25 @@ defmodule Acme.ClientTest do
     assert conn.state == :sent
     assert conn.status == 200
     assert conn.resp_body == Enum.join([token, state.thumbprint], ".")
+    state = :sys.get_state(pid)
+
+    assert is_tuple(state.requests[domain].timer_ref)
+    Process.sleep(50)
+    state = :sys.get_state(pid)
+    assert is_nil(state.requests[domain].timer_ref)
+    [cert | chain] = String.split(downloaded_cert, ~r/^\-+END CERTIFICATE\-+$\K/m, parts: 2)
+
+    domain_path = Path.join(["test/domains", domain])
+    privkey_path = Path.join([domain_path, "privkey.pem"])
+    cert_path = Path.join([domain_path, "cert.pem"])
+    chain_path = Path.join([domain_path, "chain.pem"])
+    assert state.requests[domain].private_key == File.read!(privkey_path)
+    assert File.read!(cert_path) == Client.normalize_pem(cert)
+    assert File.read!(chain_path) == chain |> to_string() |> Client.normalize_pem()
+
+    on_exit(fn ->
+      File.rm_rf!(domain_path)
+    end)
   end
 
   defp endpoints(base_url) do

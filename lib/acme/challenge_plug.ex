@@ -11,19 +11,13 @@ defmodule Acme.ChallengePlug do
 
   @impl true
   def call(conn, client) do
-    Logger.warn("request for #{conn.request_path}")
-
     case conn.request_path do
       "/.well-known/acme-challenge/" <> token ->
-        Logger.warn("started challenge for #{token}")
-
         case Acme.Client.challenge(token, client) do
           {:ok, authorization} ->
-            Logger.warn("challenge success")
             conn |> send_resp(200, authorization) |> halt()
 
-          {:error, _} = error ->
-            Logger.error("challenge error #{inspect(error)}")
+          {:error, _} ->
             conn |> send_resp(404, "Not found") |> halt()
         end
 
