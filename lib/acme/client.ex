@@ -226,7 +226,7 @@ defmodule Acme.Client do
           end)
 
           if state.notify_on_finish do
-            send(state.notify_on_finish, :certificate_saved)
+            send(state.notify_on_finish, {:certificate_saved, domain})
           end
 
           state.requests[domain]
