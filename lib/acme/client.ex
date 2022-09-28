@@ -21,7 +21,8 @@ defmodule Acme.Client do
               thumbprint: nil,
               requests: %{},
               polling_interval: nil,
-              base_path: ""
+              base_path: "",
+              notify_on_finish: nil
   end
 
   use GenServer
@@ -62,7 +63,8 @@ defmodule Acme.Client do
       private_key: jwk_map,
       thumbprint: JWK.thumbprint(jwk),
       polling_interval: Keyword.get(opts, :polling_interval, 5_000),
-      base_path: opts[:base_path] || ""
+      base_path: opts[:base_path] || "",
+      notify_on_finish: opts[:notify_on_finish]
     }
 
     Process.send_after(self(), :initial_setup, 100)
@@ -222,6 +224,10 @@ defmodule Acme.Client do
             File.write!(path, content)
             File.chmod!(path, 0o600)
           end)
+
+          if state.notify_on_finish do
+            send(state.notify_on_finish, :certificate_saved)
+          end
 
           state.requests[domain]
           |> update_in(&put_in(&1.private_key, priv_key))

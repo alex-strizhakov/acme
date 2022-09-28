@@ -209,7 +209,8 @@ defmodule Acme.ClientTest do
              thumbprint: "Y0elpL8gynwnjT7xJlDBmdap7obVA_EFNh-TOzBg6l4",
              requests: %{},
              polling_interval: 10,
-             base_path: "test"
+             base_path: "test",
+             notify_on_finish: nil
            }
 
     assert :ok = Client.create_account("email@example.com", pid)
