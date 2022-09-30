@@ -42,9 +42,4 @@ end
 
 Copyright (c) 2022, Alexander Strizhakov.
 
-Phoenix source code is licensed under the [MIT License](LICENSE.md).
-
-Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_doc)
-and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
-be found at <https://hexdocs.pm/acme>.
-
+Acme source code is licensed under the [MIT License](LICENSE.md).
