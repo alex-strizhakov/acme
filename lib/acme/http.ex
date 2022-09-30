@@ -57,7 +57,9 @@ defmodule Acme.HTTP do
   def create_account(session, email, opts \\ []) do
     terms_agreed = Keyword.get(opts, :terms_agreed, true)
     return_existing = Keyword.get(opts, :return_existing, false)
-    account_private_key = JOSE.JWK.generate_key({:rsa, 4096})
+
+    account_private_key =
+      Keyword.get(opts, :account_private_key, JOSE.JWK.generate_key({:rsa, 4096}))
 
     payload = %{
       termsOfServiceAgreed: terms_agreed,

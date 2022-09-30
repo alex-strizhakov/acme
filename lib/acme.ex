@@ -60,6 +60,7 @@ defmodule Acme do
   Options:
     * terms_agreed - indicates that client is agreed with terms of service
     * return_existing - don't create new account, check for existing
+    * account_private_key - private key from the account
   """
   @spec create_account(Session.t(), String.t(), keyword) :: {:ok, Session.t()} | {:error, any}
   def create_account(session, email, opts \\ []) do
