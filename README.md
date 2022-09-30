@@ -16,7 +16,7 @@ Implemented:
 ```elixir
 def deps do
   [
-    {:acme, github: "alex-strizhakov/acme", ref: ""}
+    {:acme, github: "alex-strizhakov/acme"}
   ]
 end
 ```
