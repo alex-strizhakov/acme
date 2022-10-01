@@ -30,6 +30,7 @@ end
 {:ok, session} = Acme.new_order(session, "example.com")
 # token will be needed when Letsencrypt will make requests for HTTP challenge to `http://example.com/.well-known/acme-challenge/#{token}`
 {:ok, %{token: token} = session} = Acme.get_http_challenge_data(session)
+{:ok, session} = Acme.request_http_challenge(session)
 # after successful challenge you can check certificate challenge status
 {:ok, session, challenge_status} = Acme.get_certificate_status(session)
 # if `challenge_status` is `:valid` you can upload CSR

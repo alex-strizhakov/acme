@@ -20,7 +20,8 @@ defmodule Acme do
       :finalize_url,
       :challenge_url,
       :token,
-      :certificate_url
+      :certificate_url,
+      :private_key
     ]
 
     @type t :: %__MODULE__{
@@ -35,7 +36,8 @@ defmodule Acme do
             finalize_url: String.t(),
             challenge_url: String.t(),
             token: String.t(),
-            certificate_url: String.t()
+            certificate_url: String.t(),
+            private_key: String.t()
           }
   end
 
@@ -58,9 +60,9 @@ defmodule Acme do
   @doc """
   Creates new account.
   Options:
-    * terms_agreed - indicates that client is agreed with terms of service
-    * return_existing - don't create new account, check for existing
-    * account_private_key - private key from the account
+    * terms_agreed - indicates that client is agreed with terms of service, by default `true`
+    * return_existing - don't create new account, check for existing, by default `false`
+    * account_private_key - private key from the account, by default will be generated
   """
   @spec create_account(Session.t(), String.t(), keyword) :: {:ok, Session.t()} | {:error, any}
   def create_account(session, email, opts \\ []) do
@@ -128,8 +130,13 @@ defmodule Acme do
   """
   @spec upload_csr(Session.t()) :: {:ok, Session.t(), :valid | :not_valid} | {:error, any}
   def upload_csr(%{finalize_url: url} = session) when is_binary(url) do
-    with {:ok, nonce, status, certificate_url} <- HTTP.upload_csr(session) do
-      {:ok, Map.merge(session, %{nonce: nonce, certificate_url: certificate_url}), status}
+    with {:ok, nonce, status, private_key, certificate_url} <- HTTP.upload_csr(session) do
+      {:ok,
+       Map.merge(session, %{
+         nonce: nonce,
+         certificate_url: certificate_url,
+         private_key: private_key
+       }), status}
     end
   end
 

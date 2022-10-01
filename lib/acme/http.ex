@@ -157,7 +157,7 @@ defmodule Acme.HTTP do
   end
 
   @spec upload_csr(Session.t()) ::
-          {:ok, String.t(), :valid | :not_valid, String.t()} | {:error, any}
+          {:ok, String.t(), :valid | :not_valid, String.t(), String.t()} | {:error, any}
   def upload_csr(session) do
     url = session.finalize_url
     private_key = X509.PrivateKey.new_rsa(4096)
@@ -177,7 +177,7 @@ defmodule Acme.HTTP do
     with {:ok, %{headers: headers, body: body}} <- Tesla.post(session.client, url, data),
          {:ok, nonce} <- get_nonce(headers) do
       status = if body["status"] == "valid", do: :valid, else: :not_valid
-      {:ok, nonce, status, body["certificate"]}
+      {:ok, nonce, status, private_key, body["certificate"]}
     else
       error ->
         Logger.error("Can't upload CSR #{inspect(error)}")

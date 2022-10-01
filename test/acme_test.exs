@@ -199,9 +199,9 @@ defmodule AcmeTest do
   describe "get_http_challenge_data/1" do
     test "success" do
       auth_url = @base_url <> "/acme/authz-v3/3484011403"
+      challenge_url = @base_url <> "/acme/chall-v3/3760565994/1yyChw"
       token_nonce = generate_nonce()
       token = "token"
-      challenge_url = @base_url <> "/acme/chall-v3/3760565994/1yyChw"
 
       expect(Mock, :call, fn %{
                                url: ^auth_url,
